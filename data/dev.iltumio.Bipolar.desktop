@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bipolar
+Comment=Manage folder-scoped Git identities and GitHub authentication
+Exec=bipolar gui
+Icon=dev.iltumio.Bipolar
+Categories=Development;RevisionControl;
+Terminal=false
+StartupNotify=true
