@@ -1,0 +1,58 @@
+# Knope configuration — https://knope.tech
+#
+# Version bumps and the CHANGELOG are derived automatically from
+# Conventional Commits (feat/fix/perf/... and `!`/BREAKING CHANGE footers).
+
+[package]
+versioned_files = [
+    "Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "CHANGELOG.md"
+# Release assets (built binaries/packages) are staged here in CI before `knope release`.
+assets = "artifacts/*"
+
+# Surface additional commit types in the changelog (they do not affect the version bump).
+extra_changelog_sections = [
+    { name = "Performance", types = ["perf"] },
+]
+
+[github]
+owner = "iltumio"
+repo = "bipolar"
+
+# --- prepare-release: run on every push to `main`, opens/updates a Release PR ---
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare release $version\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[workflows.steps.title]
+template = "chore: prepare release $version"
+
+[workflows.steps.body]
+template = "Automated release PR created by Knope.\n\nMerging it will tag `v$version` and publish a GitHub release with the notes below.\n\n$changelog"
+
+# --- release: run when the Release PR merges, tags + publishes the GitHub release ---
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"

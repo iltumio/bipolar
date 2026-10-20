@@ -1,0 +1,226 @@
+name: Release
+
+# Runs when the Knope "Release PR" (branch `release`) is merged into main.
+# Builds Linux binaries and native packages (.deb and Arch .pkg.tar.zst), then
+# `knope release` tags v$version, publishes the GitHub release with the changelog
+# notes, and uploads the built assets.
+#
+# Can also be triggered manually (workflow_dispatch) to re-run a release, e.g. to
+# re-publish assets for a version whose original run failed. knope derives the
+# version from the versioned files on the checked-out ref.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.head_ref == 'release')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev \
+            libfreetype-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64-unknown-linux-gnu
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build desktop + CLI binary
+        run: |
+          mkdir -p dist
+          cargo build --release --locked --target x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/release/bipolar dist/bipolar-x86_64-unknown-linux-gnu
+
+      - name: Build headless CLI-only binary
+        run: |
+          cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/release/bipolar dist/bipolar-cli-x86_64-unknown-linux-gnu
+
+      - name: Package tarball and Debian (.deb) package
+        shell: bash
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+
+          # Portable tarball with desktop entry and icon (matches `make install` layout)
+          mkdir -p bundle/bin bundle/share/applications bundle/share/icons/hicolor/scalable/apps
+          install -Dm755 dist/bipolar-x86_64-unknown-linux-gnu bundle/bin/bipolar
+          install -Dm644 data/dev.iltumio.Bipolar.desktop bundle/share/applications/dev.iltumio.Bipolar.desktop
+          install -Dm644 data/dev.iltumio.Bipolar.svg bundle/share/icons/hicolor/scalable/apps/dev.iltumio.Bipolar.svg
+          install -Dm644 LICENSE bundle/LICENSE
+          install -Dm644 README.md bundle/README.md
+          tar -C bundle -czf "dist/bipolar-x86_64-unknown-linux-gnu.tar.gz" .
+
+          # Debian / Ubuntu package
+          mkdir -p deb-root/DEBIAN
+          install -Dm755 dist/bipolar-x86_64-unknown-linux-gnu deb-root/usr/bin/bipolar
+          install -Dm644 data/dev.iltumio.Bipolar.desktop deb-root/usr/share/applications/dev.iltumio.Bipolar.desktop
+          install -Dm644 data/dev.iltumio.Bipolar.svg deb-root/usr/share/icons/hicolor/scalable/apps/dev.iltumio.Bipolar.svg
+          install -Dm644 LICENSE deb-root/usr/share/doc/bipolar/copyright
+
+          cat > deb-root/DEBIAN/control <<EOF
+          Package: bipolar
+          Version: ${VERSION}
+          Section: vcs
+          Priority: optional
+          Architecture: amd64
+          Depends: git, libc6, libxcb1, libxkbcommon0, libxkbcommon-x11-0
+          Recommends: gh, openssl, xdg-desktop-portal
+          Maintainer: Manuel Tumiati <tumiatimanuel@gmail.com>
+          Homepage: https://github.com/iltumio/bipolar
+          Description: Folder-scoped Git identities and GitHub authentication
+           Native Rust / GPUI desktop app and CLI for Linux that gives personal and work
+           folders their own Git identity and GitHub authentication via includeIf.
+          EOF
+          sed -i 's/^          //' deb-root/DEBIAN/control
+
+          dpkg-deb --root-owner-group --build deb-root "dist/bipolar_${VERSION}_amd64.deb"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bipolar-linux-x86_64
+          path: dist/*
+
+  build-arch:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.head_ref == 'release')
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel \
+            rustup \
+            git \
+            libxcb \
+            libxkbcommon \
+            libxkbcommon-x11 \
+            fontconfig \
+            freetype2
+
+      - name: Setup Rust
+        run: rustup default stable
+
+      - name: Build Bipolar
+        run: cargo build --release --locked
+
+      - name: Package as Arch pkg
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          SRCDIR="$GITHUB_WORKSPACE"
+
+          mkdir -p /tmp/pkg
+
+          cat > /tmp/pkg/PKGBUILD <<PEOF
+          pkgname=bipolar
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc='Give personal and work folders their own Git identity and GitHub authentication'
+          arch=('x86_64')
+          url='https://github.com/iltumio/bipolar'
+          license=('MIT' 'Apache-2.0')
+          depends=('git' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11')
+          optdepends=(
+            'github-cli: GitHub CLI and personal login authentication'
+            'openssl: GitHub App JWT signing'
+            'xdg-desktop-portal: native folder and file pickers'
+          )
+          options=('!debug')
+
+          package() {
+            install -Dm755 "${SRCDIR}/target/release/bipolar" "\$pkgdir/usr/bin/bipolar"
+            install -Dm644 "${SRCDIR}/data/dev.iltumio.Bipolar.desktop" "\$pkgdir/usr/share/applications/dev.iltumio.Bipolar.desktop"
+            install -Dm644 "${SRCDIR}/data/dev.iltumio.Bipolar.svg" "\$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.iltumio.Bipolar.svg"
+            install -Dm644 "${SRCDIR}/LICENSE" "\$pkgdir/usr/share/licenses/\$pkgname/LICENSE"
+          }
+          PEOF
+          sed -i 's/^          //' /tmp/pkg/PKGBUILD
+
+          chown -R builder:builder /tmp/pkg
+          chmod -R a+rX "$GITHUB_WORKSPACE"
+          cd /tmp/pkg
+          su builder -c "makepkg --noextract --nodeps"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: bipolar-arch
+          path: /tmp/pkg/*.pkg.tar.zst
+
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.head_ref == 'release')
+    needs: [build-linux, build-arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Stage release assets and checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum -- * > SHA256SUMS
+          echo "Staged release assets:"
+          ls -la
+
+      - uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+
+      # Tags v$version, creates the GitHub release with changelog notes, and
+      # uploads everything under artifacts/* (see `assets` in knope.toml).
+      - name: Publish release
+        run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

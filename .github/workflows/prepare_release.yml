@@ -1,0 +1,48 @@
+name: Prepare release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    # Skip the commit Knope itself pushes to the release branch.
+    if: "${{ !contains(github.event.head_commit.message, 'chore: prepare release') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # A PAT lets the opened PR trigger CI checks. Falls back to GITHUB_TOKEN
+          # (the PR still opens, but pushes from it won't trigger other workflows).
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+
+      - name: Open/update release PR
+        run: |
+          if git tag --list 'v[0-9]*' | grep -q .; then
+            knope prepare-release --verbose
+          else
+            knope prepare-release --override-version 0.1.0 --verbose
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+        # Exits non-zero when there is nothing new to release — that's expected.
+        continue-on-error: true

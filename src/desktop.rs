@@ -124,11 +124,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-x", Cut, Some("TextInput")),
         KeyBinding::new("home", Home, Some("TextInput")),
         KeyBinding::new("end", End, Some("TextInput")),
-        KeyBinding::new(
-            "ctrl-cmd-space",
-            ShowCharacterPalette,
-            Some("TextInput"),
-        ),
+        KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some("TextInput")),
         KeyBinding::new("tab", Tab, None),
         KeyBinding::new("shift-tab", TabPrev, None),
         KeyBinding::new("escape", CancelModal, None),
@@ -884,8 +880,7 @@ impl EntityInputHandler for TextInput {
 
         let start = range.start.min(self.content.len());
         let end = range.end.min(self.content.len());
-        self.content =
-            (self.content[0..start].to_owned() + new_text + &self.content[end..]).into();
+        self.content = (self.content[0..start].to_owned() + new_text + &self.content[end..]).into();
         self.selected_range = start + new_text.len()..start + new_text.len();
         self.marked_range.take();
         cx.emit(TextChanged);
@@ -911,8 +906,7 @@ impl EntityInputHandler for TextInput {
 
         let start = range.start.min(self.content.len());
         let end = range.end.min(self.content.len());
-        self.content =
-            (self.content[0..start].to_owned() + new_text + &self.content[end..]).into();
+        self.content = (self.content[0..start].to_owned() + new_text + &self.content[end..]).into();
         if !new_text.is_empty() {
             self.marked_range = Some(start..start + new_text.len());
         } else {
@@ -1212,9 +1206,7 @@ impl Render for TextInput {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .child(TextElement {
-                input: cx.entity(),
-            })
+            .child(TextElement { input: cx.entity() })
     }
 }
 
@@ -1242,9 +1234,8 @@ impl Focusable for DesktopView {
 
 impl DesktopView {
     fn new(app: Desktop, _window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter_input = cx.new(|cx| {
-            TextInput::new(cx, app.filter.clone(), "Filter by name, path, or email…")
-        });
+        let filter_input =
+            cx.new(|cx| TextInput::new(cx, app.filter.clone(), "Filter by name, path, or email…"));
         let folder_input = cx.new(|cx| {
             let mut input = TextInput::new(
                 cx,
@@ -1254,8 +1245,7 @@ impl DesktopView {
             input.enabled = app.selected.is_none();
             input
         });
-        let name_input =
-            cx.new(|cx| TextInput::new(cx, app.editor.name.clone(), "e.g. Jane Doe"));
+        let name_input = cx.new(|cx| TextInput::new(cx, app.editor.name.clone(), "e.g. Jane Doe"));
         let email_input =
             cx.new(|cx| TextInput::new(cx, app.editor.email.clone(), "e.g. jane@company.com"));
         let signing_input = cx.new(|cx| {
@@ -1272,11 +1262,9 @@ impl DesktopView {
                 "~/.ssh/id_ed25519_work (leaves default SSH agent if empty)",
             )
         });
-        let user_input =
-            cx.new(|cx| TextInput::new(cx, app.editor.user.clone(), "e.g. octocat"));
-        let app_id_input = cx.new(|cx| {
-            TextInput::new(cx, app.editor.app_id.clone(), "Numeric GitHub App ID")
-        });
+        let user_input = cx.new(|cx| TextInput::new(cx, app.editor.user.clone(), "e.g. octocat"));
+        let app_id_input =
+            cx.new(|cx| TextInput::new(cx, app.editor.app_id.clone(), "Numeric GitHub App ID"));
         let installation_input = cx.new(|cx| {
             TextInput::new(
                 cx,
@@ -1284,9 +1272,8 @@ impl DesktopView {
                 "Numeric Installation ID",
             )
         });
-        let key_input = cx.new(|cx| {
-            TextInput::new(cx, app.editor.key.clone(), "/path/to/private-key.pem")
-        });
+        let key_input =
+            cx.new(|cx| TextInput::new(cx, app.editor.key.clone(), "/path/to/private-key.pem"));
 
         let subscriptions = vec![
             cx.subscribe(&filter_input, |this, input, _: &TextChanged, cx| {
@@ -1464,15 +1451,13 @@ impl DesktopView {
                     .flex_wrap()
                     .items_center()
                     .gap(px(8.0))
-                    .child(
-                        primary_button("btn-new-profile", "+ New Profile").on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.app.request_switch(PendingSwitch::NewProfile);
-                                this.sync_inputs_from_app(cx);
-                                cx.notify();
-                            },
-                        )),
-                    )
+                    .child(primary_button("btn-new-profile", "+ New Profile").on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.app.request_switch(PendingSwitch::NewProfile);
+                            this.sync_inputs_from_app(cx);
+                            cx.notify();
+                        }),
+                    ))
                     .child(
                         secondary_button("btn-reload", "⟳ Reload").on_click(cx.listener(
                             |this, _, _, cx| {
@@ -1483,20 +1468,22 @@ impl DesktopView {
                             },
                         )),
                     )
-                    .child(secondary_button("btn-backup", "Backup…").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_title("Save Bipolar profiles backup")
-                                .set_file_name("bipolar-backup.json")
-                                .add_filter("JSON Backup", &["json"])
-                                .save_file()
-                            {
-                                let result = this.app.export_backup(&path);
-                                this.app.report(result);
-                                cx.notify();
-                            }
-                        },
-                    )))
+                    .child(
+                        secondary_button("btn-backup", "Backup…").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .set_title("Save Bipolar profiles backup")
+                                    .set_file_name("bipolar-backup.json")
+                                    .add_filter("JSON Backup", &["json"])
+                                    .save_file()
+                                {
+                                    let result = this.app.export_backup(&path);
+                                    this.app.report(result);
+                                    cx.notify();
+                                }
+                            },
+                        )),
+                    )
                     .child(
                         secondary_button("btn-restore", "Restore…").on_click(cx.listener(
                             |this, _, _, cx| {
@@ -1532,17 +1519,13 @@ impl DesktopView {
             )
     }
 
-    fn render_shim_header_action(
-        &mut self,
-        shim_state: ShimState,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn render_shim_header_action(&mut self, shim_state: ShimState, cx: &mut Context<Self>) -> Div {
         match shim_state {
-            ShimState::Installed => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .child(badge("✓ gh shim active", ACCENT_TEAL, ACCENT_TEAL_DARK)),
+            ShimState::Installed => div().flex().flex_row().items_center().child(badge(
+                "✓ gh shim active",
+                ACCENT_TEAL,
+                ACCENT_TEAL_DARK,
+            )),
             ShimState::Missing => div().flex().flex_row().items_center().child(
                 secondary_button("btn-install-shim-hdr", "⚡ Install gh Shim").on_click(
                     cx.listener(|this, _, _, cx| {
@@ -2064,11 +2047,7 @@ impl DesktopView {
                             .py(px(3.0))
                             .rounded(px(6.0))
                             .border_1()
-                            .border_color(rgb(if active {
-                                ACCENT_TEAL
-                            } else {
-                                BORDER_SUBTLE
-                            }))
+                            .border_color(rgb(if active { ACCENT_TEAL } else { BORDER_SUBTLE }))
                             .bg(rgb(if active { ACCENT_TEAL_DARK } else { BG_INPUT }))
                             .text_size(px(12.0))
                             .font_weight(if active {
@@ -2777,11 +2756,7 @@ fn secondary_button(id: impl Into<ElementId>, label: &str) -> Stateful<Div> {
         .text_color(rgb(TEXT_PRIMARY))
         .cursor_pointer()
         .flex_shrink_0()
-        .hover(|style| {
-            style
-                .bg(rgb(BG_CARD_HOVER))
-                .border_color(rgb(ACCENT_TEAL))
-        })
+        .hover(|style| style.bg(rgb(BG_CARD_HOVER)).border_color(rgb(ACCENT_TEAL)))
         .active(|style| style.opacity(0.85))
         .child(label.to_owned())
 }
@@ -2878,11 +2853,7 @@ fn profile_card(ix: usize, scope: &Scope, selected: bool) -> Stateful<Div> {
             BORDER_SUBTLE
         }))
         .cursor_pointer()
-        .hover(|style| {
-            style
-                .bg(rgb(BG_CARD_HOVER))
-                .border_color(rgb(ACCENT_TEAL))
-        })
+        .hover(|style| style.bg(rgb(BG_CARD_HOVER)).border_color(rgb(ACCENT_TEAL)))
         .flex()
         .flex_col()
         .gap(px(3.0))
@@ -3003,11 +2974,7 @@ fn mode_tile(ix: usize, title: &str, subtitle: &str, active: bool) -> Stateful<D
         .border_1()
         .border_color(rgb(if active { ACCENT_TEAL } else { BORDER_SUBTLE }))
         .cursor_pointer()
-        .hover(|style| {
-            style
-                .bg(rgb(BG_CARD_HOVER))
-                .border_color(rgb(ACCENT_TEAL))
-        })
+        .hover(|style| style.bg(rgb(BG_CARD_HOVER)).border_color(rgb(ACCENT_TEAL)))
         .flex()
         .flex_col()
         .gap(px(3.0))
