@@ -17,6 +17,29 @@ Existing folder `.gitconfig` files and direct `gitdir:` includes are discovered 
 
 ## Install
 
+### Quick install (Linux x86_64)
+
+Run this command from **Bash**, **Zsh**, or **Fish** (the installer runs with `sh`):
+
+```sh
+curl -fsSL https://github.com/iltumio/bipolar/releases/latest/download/install.sh | sh
+```
+
+The installer downloads the latest portable release, verifies its SHA-256 checksum,
+and installs the binary, desktop entry, and icon into `~/.local` without `sudo`.
+It requires `curl`, `tar`, and standard Linux utilities, including `sha256sum`.
+To choose another prefix, use `curl -fsSL https://github.com/iltumio/bipolar/releases/latest/download/install.sh | env BIPOLAR_INSTALL_DIR=/your/prefix sh`.
+
+If `~/.local/bin` is not already on your `PATH`, add it to your shell configuration:
+
+- **Bash** (`~/.bashrc`): `export PATH="$HOME/.local/bin:$PATH"`
+- **Zsh** (`~/.zshrc`): `export PATH="$HOME/.local/bin:$PATH"`
+- **Fish** (run once): `fish_add_path ~/.local/bin`
+
+Launch **Bipolar** from your application menu or run `bipolar`. The desktop app
+requires a Wayland or X11 session with Vulkan support and the runtime libraries
+`libxcb`, `libxkbcommon`, and `libxkbcommon-x11`.
+
 ### Prebuilt packages (Linux x86_64)
 
 Download the latest release from [GitHub Releases](https://github.com/iltumio/bipolar/releases/latest):

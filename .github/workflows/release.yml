@@ -209,6 +209,7 @@ jobs:
       - name: Stage release assets and checksums
         shell: bash
         run: |
+          install -m755 install.sh artifacts/install.sh
           cd artifacts
           sha256sum -- * > SHA256SUMS
           echo "Staged release assets:"
