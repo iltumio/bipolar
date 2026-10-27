@@ -163,13 +163,25 @@ bipolar set ~/projects/work --auth app \
 ```
 
 App mode currently integrates the machine's `zyphe-gh-auth` profile for `iltumio`.
-Every shim invocation runs `refresh`, then `apply` to validate the `ghu_` token,
-user and installation and select the keyring login. Bipolar removes inherited
-`GH_TOKEN` / `GITHUB_TOKEN` and does not inject a token or cache one on disk.
-Long-lived agent sessions therefore use the refreshed login on their next call.
-Keep the existing `zyphe-gh-refresh.timer` enabled. Missing authorization or any
-helper failure stops the command and asks for `start` + `finish`; there is no
-installation-token or personal-login fallback. Other App IDs are rejected.
+Every shim invocation calls the helper's machine-only `token` command, which
+refreshes and validates the `ghu_` token, user and installation from the separate
+`zyphe-agents` keyring entry. Bipolar replaces inherited token variables with this
+user token only for that individual `gh` command. It does not cache tokens on disk
+or change the personal login in gh. Long-lived agents read fresh credentials on
+every command, including Git HTTPS credential requests.
+
+For an existing helper with the original `start`/`finish`/`refresh`/`apply` commands,
+apply `data/zyphe-gh-auth-isolation.patch` to `~/.local/bin/zyphe-gh-auth` once
+(`patch ~/.local/bin/zyphe-gh-auth < data/zyphe-gh-auth-isolation.patch`).
+This extends the existing helper instead of duplicating its OAuth flow.
+
+The helper must support `token` and keep `refresh`, `force-refresh` and `finish`
+from calling `gh auth login`. Keep `zyphe-gh-refresh.timer` enabled: it renews only
+the App keyring entry. The legacy explicit `apply` command overwrites the shared
+gh login and must not be used with mixed personal/App profiles. Missing helper
+support or authorization fails closed; there is no bot or personal-token fallback.
+Other App IDs are rejected. Personal mode rejects App tokens; restore a personal
+login with `/usr/bin/gh auth login --hostname github.com --web` if it was overwritten.
 Existing `github.privateKey` settings are ignored and no private key is required.
 Use the Bipolar shim for both `gh` and Git HTTPS; SSH remotes still use SSH keys.
 Bipolar does not launch agent processes or change an already running agent's environment.

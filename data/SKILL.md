@@ -61,7 +61,7 @@ Bipolar supports three authentication modes per folder:
      --github-user octocat \
      --https-helper true
    ```
-3. **GitHub App (`--auth app`)**: Uses the existing `~/.local/bin/zyphe-gh-auth` helper and keyring for iltumio through zyphe-agents. Each call runs `refresh` and `apply`, clears inherited token variables, and uses the validated gh login. No installation tokens are minted or cached; errors require `zyphe-gh-auth start` + `finish`, without fallback. Private-key settings are ignored.
+3. **GitHub App (`--auth app`)**: Uses the existing `~/.local/bin/zyphe-gh-auth` helper and keyring for iltumio through zyphe-agents. Each call captures the helper’s machine-only `token` output and sets `GH_TOKEN` only on that command. The helper must refresh/validate its separate App keyring entry without changing the personal gh login. Never run `token` in a terminal or log its output. Do not use `apply`: it overwrites the personal login. No installation tokens are minted or cached; errors require `zyphe-gh-auth start` + `finish`, without fallback. Private-key settings are ignored.
    ```bash
    bipolar set ~/work \
      --auth app \

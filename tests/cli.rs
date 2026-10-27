@@ -335,7 +335,7 @@ fn app_shim_fixture(helper: &str) -> (TempDir, Command) {
     )
     .unwrap();
     fs::create_dir(home.join("gh-config")).unwrap();
-    fs::write(home.join("gh-config/config.yml"), "aliases:\n  bipolar-auth-test: '!test -z \"${GH_TOKEN+x}\" && test -z \"${GITHUB_TOKEN+x}\" && test -z \"${GH_DEBUG+x}\" && printf clean'\n").unwrap();
+    fs::write(home.join("gh-config/config.yml"), "aliases:\n  bipolar-auth-test: '!test \"$GH_TOKEN\" = ghu_synthetic && test -z \"${GITHUB_TOKEN+x}\" && test -z \"${GH_DEBUG+x}\" && printf clean'\n").unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bipolar"));
     command
         .current_dir(home)
@@ -352,11 +352,13 @@ fn app_shim_fixture(helper: &str) -> (TempDir, Command) {
 }
 
 #[test]
-fn app_shim_refreshes_and_applies_each_call_without_token_environment() {
+fn app_shim_reads_separate_user_token_on_each_call() {
     let (temp, mut command) = app_shim_fixture(
         r#"#!/bin/sh
 [ -z "${GH_TOKEN+x}" ] && [ -z "${GITHUB_TOKEN+x}" ] && [ -z "${GH_DEBUG+x}" ] || exit 9
 printf '%s\n' "$1" >> "$HOME/calls"
+[ "$1" = token ] || exit 8
+printf ghu_synthetic
 "#,
     );
     for _ in 0..2 {
@@ -370,14 +372,14 @@ printf '%s\n' "$1" >> "$HOME/calls"
     }
     assert_eq!(
         fs::read_to_string(temp.path().join("calls")).unwrap(),
-        "refresh\napply\nrefresh\napply\n"
+        "token\ntoken\n"
     );
     assert!(!temp.path().join(".cache/bipolar").exists());
 }
 
 #[test]
 fn app_shim_fails_closed_and_redacts_helper_output() {
-    for action in ["refresh", "apply"] {
+    for action in ["token"] {
         let script = format!(
             "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/calls\"\nif [ \"$1\" = {action} ]; then\n echo sensitive-helper-output\n echo sensitive-helper-error >&2\n exit 1\nfi\n"
         );
@@ -391,14 +393,7 @@ fn app_shim_fails_closed_and_redacts_helper_output() {
         assert!(!error.contains("sensitive-helper"));
         assert!(!error.contains("ghs_"));
         let calls = fs::read_to_string(temp.path().join("calls")).unwrap();
-        assert_eq!(
-            calls,
-            if action == "refresh" {
-                "refresh\n"
-            } else {
-                "refresh\napply\n"
-            }
-        );
+        assert_eq!(calls, "token\n");
     }
 }
 
@@ -433,4 +428,18 @@ fn user_app_profile_needs_no_private_key() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn app_shim_rejects_non_user_tokens_without_exposing_them() {
+    for token in ["ghs_synthetic", "ghp_synthetic", "ghu_bad token", ""] {
+        let script = format!("#!/bin/sh\nprintf '%s' '{token}'\n");
+        let (_temp, mut command) = app_shim_fixture(&script);
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("zyphe-gh-auth start"));
+        assert!(!error.contains("synthetic"));
+    }
 }

@@ -12,8 +12,9 @@ automatically by [Knope](https://knope.tech) from
 
 - GitHub App authentication now acts as `iltumio` through the existing
   `zyphe-gh-auth` user authorization instead of minting installation tokens.
-- Each `gh` and Git HTTPS helper call refreshes and validates the keyring login,
-  removes inherited token variables, and stops on authentication errors without
+- Each `gh` and Git HTTPS helper call reads a refreshed and validated token from
+  the separate App keyring entry without overwriting personal gh logins, and stops
+  on authentication errors without
   falling back to bot or personal credentials.
 - App profiles no longer require a private key. This is a breaking change:
   App mode requires the zyphe-agents profile (App `5382086`, installation

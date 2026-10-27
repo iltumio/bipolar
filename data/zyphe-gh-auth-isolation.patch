@@ -1,0 +1,55 @@
+--- zyphe-gh-auth
++++ zyphe-gh-auth
+@@ -33,7 +33,7 @@
+          'application', 'zyphe-agents', 'account', 'iltumio'], input=json.dumps(tokens))
+ 
+ 
+-def apply(tokens):
++def validate(tokens):
+     token = tokens['access_token']
+     if not token.startswith('ghu_'):
+         raise RuntimeError('Expected a GitHub App user token')
+@@ -43,6 +43,11 @@
+     installations = request('https://api.github.com/user/installations', token=token)
+     if not any(i['id'] == 173056379 and i['app_id'] == 5382086 for i in installations['installations']):
+         raise RuntimeError('Zyphe Agents installation is not accessible')
++    return token
++
++
++def apply(tokens):
++    token = validate(tokens)
+     run(['/usr/bin/gh', 'auth', 'login', '--hostname', 'github.com',
+          '--git-protocol', 'https', '--with-token'], input=token + '\n')
+     print('GitHub CLI authenticated as iltumio through zyphe-agents')
+@@ -74,11 +79,11 @@
+             tokens['expires_at'] = time.time() + tokens['expires_in']
+             save(tokens)
+             pending.unlink()
+-        elif mode in ('refresh', 'apply', 'force-refresh'):
++        elif mode in ('refresh', 'apply', 'force-refresh', 'token'):
+             tokens = json.loads(run(['secret-tool', 'lookup', 'application', 'zyphe-agents', 'account', 'iltumio']).stdout)
+             if mode == 'refresh' and tokens['expires_at'] > time.time() + 3600:
+                 return
+-            if mode != 'apply':
++            if mode == 'force-refresh' or (mode in ('refresh', 'token') and tokens['expires_at'] <= time.time() + 3600):
+                 renewed = request('https://github.com/login/oauth/access_token', {
+                     'client_id': CLIENT, 'grant_type': 'refresh_token', 'refresh_token': tokens['refresh_token']})
+                 if 'access_token' not in renewed:
+@@ -88,8 +93,15 @@
+                 save(renewed)
+                 tokens = renewed
+         else:
+-            raise RuntimeError('Usage: zyphe-gh-auth [start|finish|apply|refresh|force-refresh]')
+-        apply(tokens)
++            raise RuntimeError('Usage: zyphe-gh-auth [start|finish|apply|refresh|force-refresh|token]')
++        if mode == 'apply':
++            apply(tokens)
++        elif mode == 'token':
++            # Machine-only credential output: callers must capture it, never log it.
++            print(validate(tokens))
++        else:
++            validate(tokens)
++            print('Zyphe App credentials saved in their separate keyring entry')
+ 
+ 
+ if __name__ == '__main__':

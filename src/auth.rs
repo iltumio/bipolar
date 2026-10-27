@@ -48,33 +48,43 @@ pub fn validate_app_profile(id: &str, installation: &str) -> Result<()> {
     Ok(())
 }
 
-fn prepare_app_auth(id: &str, installation: &str, home: &Path) -> Result<()> {
+fn app_token_for(id: &str, installation: &str, home: &Path) -> Result<String> {
     validate_app_profile(id, installation)?;
-    let helper = home.join(".local/bin/zyphe-gh-auth");
-    // The existing helper owns locking, refresh-token rotation, keyring storage and
-    // validation of token type, user and installation. Never surface its output.
-    // `refresh` can be a no-op, so always apply/validate the saved credential too.
-    for action in ["refresh", "apply"] {
-        let status = Command::new(&helper)
-            .arg(action)
-            .env_remove("GH_TOKEN")
-            .env_remove("GITHUB_TOKEN")
-            .env_remove("GH_DEBUG")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|_| anyhow::anyhow!(REAUTHORIZE))?;
-        ensure!(status.success(), REAUTHORIZE);
-    }
-    Ok(())
+    // `token` refreshes, validates and reads the App's separate keyring entry.
+    // It must never log into gh: that would overwrite the personal account token.
+    // Old helpers reject this command, so migration fails closed.
+    let output = Command::new(home.join(".local/bin/zyphe-gh-auth"))
+        .arg("token")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GH_DEBUG")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| anyhow::anyhow!(REAUTHORIZE))?;
+    ensure!(output.status.success(), REAUTHORIZE);
+    let token = String::from_utf8(output.stdout).map_err(|_| anyhow::anyhow!(REAUTHORIZE))?;
+    let token = token.trim();
+    ensure!(
+        token.starts_with("ghu_") && !token.contains(char::is_whitespace),
+        REAUTHORIZE
+    );
+    Ok(token.to_owned())
 }
 
-fn app_auth(global: Option<&Path>) -> Result<()> {
+fn app_token(global: Option<&Path>) -> Result<String> {
     let id = effective("github.appId", global)?;
     let installation = effective("github.installationId", global)?;
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is missing")?);
-    prepare_app_auth(&id, &installation, &home)
+    app_token_for(&id, &installation, &home)
+}
+
+fn validate_personal_token(token: &str) -> Result<()> {
+    ensure!(
+        token.starts_with("gho_") || token.starts_with("ghp_") || token.starts_with("github_pat_"),
+        "The saved gh login is not a personal token. Run /usr/bin/gh auth login --hostname github.com --web to restore Personal Login."
+    );
+    Ok(())
 }
 
 pub fn personal_token_for(user: &str) -> Result<String> {
@@ -95,7 +105,11 @@ pub fn personal_token_for(user: &str) -> Result<String> {
         "Personal login '{}' unavailable in gh. Run: /usr/bin/gh auth login --hostname github.com",
         user
     );
-    Ok(String::from_utf8(out.stdout)?.trim().to_owned())
+    let token = String::from_utf8(out.stdout)
+        .map_err(|_| anyhow::anyhow!("Cannot decode personal login credential"))?;
+    let token = token.trim();
+    validate_personal_token(token)?;
+    Ok(token.to_owned())
 }
 
 pub fn verify_profile_auth(
@@ -126,7 +140,7 @@ pub fn verify_profile_auth(
             ))
         }
         2 => {
-            prepare_app_auth(app_id.trim(), installation_id.trim(), home)?;
+            let _token = app_token_for(app_id.trim(), installation_id.trim(), home)?;
             Ok("Verified iltumio via the zyphe-agents GitHub App user authorization.".into())
         }
         _ => anyhow::bail!("Unsupported authentication mode"),
@@ -176,7 +190,11 @@ pub fn run_gh_with_config(args: &[String], global: Option<&Path>) -> Result<i32>
             .env("GH_HOST", "github.com");
         match mode.as_str() {
             "personal" => {
-                if args[0] != "auth" || args.get(1).is_some_and(|s| s == "git-credential") {
+                if args[0] != "auth"
+                    || args
+                        .get(1)
+                        .is_some_and(|s| s == "git-credential" || s == "status")
+                {
                     let user = effective("github.user", global)?;
                     command.env("GH_TOKEN", personal_token_for(&user)?);
                 }
@@ -189,7 +207,7 @@ pub fn run_gh_with_config(args: &[String], global: Option<&Path>) -> Result<i32>
                             .is_some_and(|s| s == "status" || s == "git-credential"),
                     "App user credentials are managed by zyphe-gh-auth. Run zyphe-gh-auth start, then zyphe-gh-auth finish to authorize."
                 );
-                app_auth(global)?;
+                command.env("GH_TOKEN", app_token(global)?);
             }
             _ => anyhow::bail!("Unknown github.authMode: {mode}; refusing authentication fallback"),
         }
@@ -232,4 +250,19 @@ pub fn install_wrapper(directory: &Path, replace: bool) -> Result<PathBuf> {
         return Err(error).context("Cannot install launcher");
     }
     Ok(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_personal_token;
+
+    #[test]
+    fn personal_login_rejects_app_credentials() {
+        for token in ["ghu_synthetic", "ghs_synthetic", ""] {
+            assert!(validate_personal_token(token).is_err());
+        }
+        for token in ["gho_synthetic", "ghp_synthetic", "github_pat_synthetic"] {
+            assert!(validate_personal_token(token).is_ok());
+        }
+    }
 }
