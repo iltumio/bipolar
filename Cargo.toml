@@ -1,6 +1,6 @@
 [package]
 name = "bipolar"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Give personal and work folders their own Git identity and GitHub authentication"
 license = "MIT OR Apache-2.0"

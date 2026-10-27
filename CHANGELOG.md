@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com), this proj
 adheres to [Semantic Versioning](https://semver.org), and the changelog is maintained
 automatically by [Knope](https://knope.tech) from
 [Conventional Commits](https://www.conventionalcommits.org).
+## 0.3.0 (2026-10-27)
+
+### Breaking Changes
+
+- app mode now requires the existing zyphe-agents user authorization helper and profile instead of arbitrary GitHub App private keys.
+
+### Fixes
+
+- use GitHub App user authorization and bump to 0.2.0
+- isolate App credentials from personal gh logins
+
 ## 0.2.0 (2026-10-27)
 
 ### Changed
