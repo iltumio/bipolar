@@ -5,7 +5,7 @@ description: Use when managing folder-scoped Git identities, commit signing (GPG
 
 # Bipolar CLI Skill
 
-`bipolar` manages folder-scoped Git identities (`includeIf.gitdir:<folder>/.path`) and GitHub authentication (`personal` login or short-lived `app` installation tokens) without overwriting unmanaged Git settings or comments.
+`bipolar` manages folder-scoped Git identities (`includeIf.gitdir:<folder>/.path`) and GitHub authentication (`personal` login or `app` user authorization) without overwriting unmanaged Git settings or comments.
 
 ## 1. Inspect Current Profiles & Repository State
 
@@ -61,19 +61,15 @@ Bipolar supports three authentication modes per folder:
      --github-user octocat \
      --https-helper true
    ```
-3. **GitHub App (`--auth app`)**: Automatically signs a RS256 JWT with OpenSSL and mints/caches short-lived installation tokens (`~/.cache/bipolar`). Never falls back to personal credentials on failure.
-   - Note: The `.pem` private key file **must** exist at an absolute path (or `~/...`) and have owner-only permissions (`chmod 600`).
+3. **GitHub App (`--auth app`)**: Uses the existing `~/.local/bin/zyphe-gh-auth` helper and keyring for iltumio through zyphe-agents. Each call runs `refresh` and `apply`, clears inherited token variables, and uses the validated gh login. No installation tokens are minted or cached; errors require `zyphe-gh-auth start` + `finish`, without fallback. Private-key settings are ignored.
    ```bash
-   chmod 600 ~/.keys/company-bot.pem
-   bipolar set ~/company-bot \
-     --name "company-bot[bot]" \
-     --email "123456+company-bot[bot]@users.noreply.github.com" \
+   bipolar set ~/work \
      --auth app \
-     --app-id 123456 \
-     --installation-id 78901234 \
-     --private-key ~/.keys/company-bot.pem \
+     --app-id 5382086 \
+     --installation-id 173056379 \
      --https-helper true
    ```
+   Keep `zyphe-gh-refresh.timer` enabled and put the Bipolar `gh` shim on PATH. Git must use HTTPS with this helper for App restrictions to apply; SSH uses its own credentials.
 
 ### Arbitrary Git Config Keys (`--set KEY=VALUE`)
 

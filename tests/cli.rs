@@ -320,3 +320,117 @@ fn backup_and_restore_relocate_paths_on_new_machine() {
     assert!(work_b_text.contains(&home_b.display().to_string()));
     assert!(!work_b_text.contains(&home_a.display().to_string()));
 }
+
+fn app_shim_fixture(helper: &str) -> (TempDir, Command) {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    fs::create_dir_all(home.join(".local/bin")).unwrap();
+    let path = home.join(".local/bin/zyphe-gh-auth");
+    fs::write(&path, helper).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(
+        home.join("global"),
+        "[github]\nauthMode = app\nappId = 5382086\ninstallationId = 173056379\n",
+    )
+    .unwrap();
+    fs::create_dir(home.join("gh-config")).unwrap();
+    fs::write(home.join("gh-config/config.yml"), "aliases:\n  bipolar-auth-test: '!test -z \"${GH_TOKEN+x}\" && test -z \"${GITHUB_TOKEN+x}\" && test -z \"${GH_DEBUG+x}\" && printf clean'\n").unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_bipolar"));
+    command
+        .current_dir(home)
+        .env("HOME", home)
+        .env("GH_CONFIG_DIR", home.join("gh-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GH_TOKEN", "ghs_synthetic-inherited-token")
+        .env("GITHUB_TOKEN", "ghs_synthetic-inherited-token")
+        .env("GH_DEBUG", "api")
+        .arg("--config")
+        .arg(home.join("global"))
+        .args(["gh", "--", "bipolar-auth-test"]);
+    (temp, command)
+}
+
+#[test]
+fn app_shim_refreshes_and_applies_each_call_without_token_environment() {
+    let (temp, mut command) = app_shim_fixture(
+        r#"#!/bin/sh
+[ -z "${GH_TOKEN+x}" ] && [ -z "${GITHUB_TOKEN+x}" ] && [ -z "${GH_DEBUG+x}" ] || exit 9
+printf '%s\n' "$1" >> "$HOME/calls"
+"#,
+    );
+    for _ in 0..2 {
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"clean");
+    }
+    assert_eq!(
+        fs::read_to_string(temp.path().join("calls")).unwrap(),
+        "refresh\napply\nrefresh\napply\n"
+    );
+    assert!(!temp.path().join(".cache/bipolar").exists());
+}
+
+#[test]
+fn app_shim_fails_closed_and_redacts_helper_output() {
+    for action in ["refresh", "apply"] {
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/calls\"\nif [ \"$1\" = {action} ]; then\n echo sensitive-helper-output\n echo sensitive-helper-error >&2\n exit 1\nfi\n"
+        );
+        let (temp, mut command) = app_shim_fixture(&script);
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("zyphe-gh-auth start"));
+        assert!(error.contains("zyphe-gh-auth finish"));
+        assert!(!error.contains("sensitive-helper"));
+        assert!(!error.contains("ghs_"));
+        let calls = fs::read_to_string(temp.path().join("calls")).unwrap();
+        assert_eq!(
+            calls,
+            if action == "refresh" {
+                "refresh\n"
+            } else {
+                "refresh\napply\n"
+            }
+        );
+    }
+}
+
+#[test]
+fn app_shim_missing_helper_requires_reauthorization() {
+    let (temp, mut command) = app_shim_fixture("#!/bin/sh\nexit 0\n");
+    fs::remove_file(temp.path().join(".local/bin/zyphe-gh-auth")).unwrap();
+    let output = command.output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("zyphe-gh-auth start"));
+}
+
+#[test]
+fn user_app_profile_needs_no_private_key() {
+    let temp = TempDir::new().unwrap();
+    let global = temp.path().join("global");
+    let output = cli(
+        &global,
+        &[
+            "set",
+            temp.path().to_str().unwrap(),
+            "--auth",
+            "app",
+            "--app-id",
+            "5382086",
+            "--installation-id",
+            "173056379",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

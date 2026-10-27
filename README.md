@@ -62,7 +62,7 @@ Download the latest release from [GitHub Releases](https://github.com/iltumio/bi
 
 Requires a current stable Rust toolchain (verified with **1.95**), Git, and a Wayland or X11 desktop with Vulkan support. The desktop UI is built with [GPUI](https://www.gpui.rs/) and links only against `libxcb`, `libxkbcommon`, and `libxkbcommon-x11`; GTK development libraries are not required. Native folder/file pickers use XDG Desktop Portal and need a portal backend implementing file selection (for example GTK, GNOME, or KDE). Paths can also be entered manually.
 
-GitHub authentication additionally requires GitHub CLI at `/usr/bin/gh` and OpenSSL. On Arch Linux install `git`, `github-cli`, and `openssl`, plus the portal backend for your desktop.
+GitHub authentication additionally requires GitHub CLI at `/usr/bin/gh` and, for App profiles, the existing `~/.local/bin/zyphe-gh-auth` helper. On Arch Linux install `git` and `github-cli`, plus the portal backend for your desktop.
 
 ```sh
 cargo run -- gui
@@ -153,22 +153,32 @@ Personal profiles use the selected account already saved by `/usr/bin/gh auth lo
 bipolar set ~/projects/personal --auth personal --github-user your-login
 ```
 
-For work folders, use an installed GitHub App with an owner-readable private key:
+For work folders, use the existing zyphe-agents user authorization:
 
 ```sh
-chmod 600 ~/.config/github/work-app.pem
+zyphe-gh-auth start
+zyphe-gh-auth finish
 bipolar set ~/projects/work --auth app \
-  --app-id 123456 --installation-id 789012 \
-  --private-key ~/.config/github/work-app.pem
+  --app-id 5382086 --installation-id 173056379 --https-helper true
 ```
 
-The configuration stores only IDs and the path to your key. Keys are not imported or copied. Installation tokens are generated on demand, cached with owner-only permissions in `$XDG_CACHE_HOME/bipolar` (or `~/.cache/bipolar`), and renewed before expiry. A failed App authentication does not fall back to your personal account. Capabilities are limited to the App's installation and permissions.
+App mode currently integrates the machine's `zyphe-gh-auth` profile for `iltumio`.
+Every shim invocation runs `refresh`, then `apply` to validate the `ghu_` token,
+user and installation and select the keyring login. Bipolar removes inherited
+`GH_TOKEN` / `GITHUB_TOKEN` and does not inject a token or cache one on disk.
+Long-lived agent sessions therefore use the refreshed login on their next call.
+Keep the existing `zyphe-gh-refresh.timer` enabled. Missing authorization or any
+helper failure stops the command and asks for `start` + `finish`; there is no
+installation-token or personal-login fallback. Other App IDs are rejected.
+Existing `github.privateKey` settings are ignored and no private key is required.
+Use the Bipolar shim for both `gh` and Git HTTPS; SSH remotes still use SSH keys.
+Bipolar does not launch agent processes or change an already running agent's environment.
 
 Run from inside a repository (or any folder covered by a registered scope):
 
 ```sh
 bipolar gh -- pr list
-bipolar gh -- api installation/repositories
+bipolar gh -- api user/installations
 ```
 
 Or install the native binary as a `gh` launcher:
@@ -232,7 +242,7 @@ cargo test desktop::tests
 
 Tests use temporary configuration files, including the GPUI desktop editor preview/save/remove workflow and headless rendering of its responsive layouts. They cover inheritance in real repositories and linked worktrees, existing includes, repeated registration, arbitrary setting preservation, symlinks, backups, stale previews, and malformed input. Native window creation and portal file pickers require a desktop session for manual verification.
 
-Git conditional include behavior follows the [Git configuration documentation](https://git-scm.com/docs/git-config). GitHub App authentication follows [GitHub's installation-token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
+Git conditional include behavior follows the [Git configuration documentation](https://git-scm.com/docs/git-config). GitHub App authentication follows [GitHub's user-token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-with-a-github-app-on-behalf-of-a-user).
 
 ## License
 

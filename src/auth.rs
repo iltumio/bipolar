@@ -1,11 +1,6 @@
 use anyhow::{Context, Result, ensure};
-use fs2::FileExt;
-use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    fs::OpenOptions,
-    io::Write,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -39,147 +34,47 @@ fn effective(key: &str, global: Option<&Path>) -> Result<String> {
     Ok(String::new())
 }
 
-fn base64url(data: &[u8]) -> String {
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut result = String::new();
-    for chunk in data.chunks(3) {
-        let a = chunk[0] as u32;
-        let b = *chunk.get(1).unwrap_or(&0) as u32;
-        let c = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (a << 16) | (b << 8) | c;
-        for i in 0..(chunk.len() + 1) {
-            result.push(TABLE[((n >> (18 - i * 6)) & 63) as usize] as char);
-        }
-    }
-    result
-}
-
 fn now() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
-#[derive(Serialize, Deserialize)]
-struct CachedToken {
-    token: String,
-    valid_until: u64,
+const REAUTHORIZE: &str = "GitHub App user authentication unavailable. Run zyphe-gh-auth start, then zyphe-gh-auth finish; no installation or personal-token fallback was used.";
+
+pub fn validate_app_profile(id: &str, installation: &str) -> Result<()> {
+    ensure!(
+        id == "5382086" && installation == "173056379",
+        "App authentication requires the zyphe-gh-auth profile (App 5382086, Installation 173056379); refusing installation-token fallback"
+    );
+    Ok(())
 }
 
-pub fn app_token_for(id: &str, installation: &str, key_input: &str, home: &Path) -> Result<String> {
-    ensure!(
-        !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
-        "Missing or invalid GitHub App ID"
-    );
-    ensure!(
-        !installation.is_empty() && installation.bytes().all(|b| b.is_ascii_digit()),
-        "Missing or invalid installation ID"
-    );
-    let key = key_input
-        .strip_prefix("~/")
-        .map(|p| home.join(p))
-        .unwrap_or_else(|| PathBuf::from(key_input));
-    ensure!(
-        key.is_absolute() && key.is_file(),
-        "App private key must point to an existing absolute path"
-    );
-    ensure!(
-        fs::metadata(&key)?.permissions().mode() & 0o077 == 0,
-        "Private key must be readable only by its owner (chmod 600)"
-    );
-    let cache_dir = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".cache"))
-        .join("bipolar");
-    fs::create_dir_all(&cache_dir)?;
-    fs::set_permissions(&cache_dir, fs::Permissions::from_mode(0o700))?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(cache_dir.join("token.lock"))?;
-    lock.lock_exclusive()?;
-    // Include the key's identity so a rotated key never reuses an old cached token.
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    fs::read(&key)?.hash(&mut hash);
-    let cache = cache_dir.join(format!("{id}-{installation}-{:x}.json", hash.finish()));
-    if let Ok(bytes) = fs::read(&cache)
-        && let Ok(saved) = serde_json::from_slice::<CachedToken>(&bytes)
-        && saved.valid_until > now()? + 300
-    {
-        return Ok(saved.token);
+fn prepare_app_auth(id: &str, installation: &str, home: &Path) -> Result<()> {
+    validate_app_profile(id, installation)?;
+    let helper = home.join(".local/bin/zyphe-gh-auth");
+    // The existing helper owns locking, refresh-token rotation, keyring storage and
+    // validation of token type, user and installation. Never surface its output.
+    // `refresh` can be a no-op, so always apply/validate the saved credential too.
+    for action in ["refresh", "apply"] {
+        let status = Command::new(&helper)
+            .arg(action)
+            .env_remove("GH_TOKEN")
+            .env_remove("GITHUB_TOKEN")
+            .env_remove("GH_DEBUG")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| anyhow::anyhow!(REAUTHORIZE))?;
+        ensure!(status.success(), REAUTHORIZE);
     }
-    let issued = now()?;
-    let payload = serde_json::to_vec(
-        &serde_json::json!({"iat": issued.saturating_sub(60), "exp": issued + 540, "iss": id}),
-    )?;
-    let message = format!(
-        "{}.{}",
-        base64url(br#"{"alg":"RS256","typ":"JWT"}"#),
-        base64url(&payload)
-    );
-    let mut signer = Command::new("openssl")
-        .args(["dgst", "-sha256", "-sign"])
-        .arg(&key)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("OpenSSL is required for GitHub App authentication")?;
-    signer
-        .stdin
-        .take()
-        .context("Cannot open signer input")?
-        .write_all(message.as_bytes())?;
-    let signed = signer.wait_with_output()?;
-    ensure!(
-        signed.status.success(),
-        "Cannot sign App JWT; verify the private key"
-    );
-    let jwt = format!("{message}.{}", base64url(&signed.stdout));
-    // JWTs require Bearer authentication; gh's normal token authentication is unsuitable.
-    let response = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("bipolar/0.1")
-        .build()?
-        .post(format!(
-            "https://api.github.com/app/installations/{installation}/access_tokens"
-        ))
-        .bearer_auth(jwt)
-        .header("Accept", "application/vnd.github+json")
-        .json(&serde_json::json!({}))
-        .send()
-        .context("Cannot reach GitHub for an App token; personal credentials were not used")?;
-    ensure!(
-        response.status().is_success(),
-        "Cannot obtain App token (HTTP {}); check installation and private key. Personal credentials were not used.",
-        response.status()
-    );
-    let result: serde_json::Value = response.json()?;
-    let token = result["token"]
-        .as_str()
-        .context("GitHub returned no installation token")?
-        .to_owned();
-    // Installation tokens last one hour; refresh ten minutes early.
-    let saved = CachedToken {
-        token: token.clone(),
-        valid_until: issued + 3000,
-    };
-    let mut temp = tempfile::NamedTempFile::new_in(&cache_dir)?;
-    temp.as_file()
-        .set_permissions(fs::Permissions::from_mode(0o600))?;
-    serde_json::to_writer(&mut temp, &saved)?;
-    temp.as_file().sync_all()?;
-    temp.persist(cache).map_err(|e| e.error)?;
-    Ok(token)
+    Ok(())
 }
 
-fn app_token(global: Option<&Path>) -> Result<String> {
+fn app_auth(global: Option<&Path>) -> Result<()> {
     let id = effective("github.appId", global)?;
     let installation = effective("github.installationId", global)?;
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is missing")?);
-    let key = effective("github.privateKey", global)?;
-    app_token_for(&id, &installation, &key, &home)
+    prepare_app_auth(&id, &installation, &home)
 }
 
 pub fn personal_token_for(user: &str) -> Result<String> {
@@ -208,7 +103,7 @@ pub fn verify_profile_auth(
     user: &str,
     app_id: &str,
     installation_id: &str,
-    private_key: &str,
+    _private_key: &str,
     home: &Path,
 ) -> Result<String> {
     match mode {
@@ -231,17 +126,8 @@ pub fn verify_profile_auth(
             ))
         }
         2 => {
-            let _token = app_token_for(
-                app_id.trim(),
-                installation_id.trim(),
-                private_key.trim(),
-                home,
-            )?;
-            Ok(format!(
-                "Successfully signed JWT and minted GitHub App token (App {}, Installation {}).",
-                app_id.trim(),
-                installation_id.trim()
-            ))
+            prepare_app_auth(app_id.trim(), installation_id.trim(), home)?;
+            Ok("Verified iltumio via the zyphe-agents GitHub App user authorization.".into())
         }
         _ => anyhow::bail!("Unsupported authentication mode"),
     }
@@ -301,9 +187,9 @@ pub fn run_gh_with_config(args: &[String], global: Option<&Path>) -> Result<i32>
                         || args
                             .get(1)
                             .is_some_and(|s| s == "status" || s == "git-credential"),
-                    "App tokens are managed automatically. Use /usr/bin/gh to manage personal logins."
+                    "App user credentials are managed by zyphe-gh-auth. Run zyphe-gh-auth start, then zyphe-gh-auth finish to authorize."
                 );
-                command.env("GH_TOKEN", app_token(global)?);
+                app_auth(global)?;
             }
             _ => anyhow::bail!("Unknown github.authMode: {mode}; refusing authentication fallback"),
         }
@@ -346,17 +232,4 @@ pub fn install_wrapper(directory: &Path, replace: bool) -> Result<PathBuf> {
         return Err(error).context("Cannot install launcher");
     }
     Ok(target)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::base64url;
-    #[test]
-    fn jwt_encoding_has_no_padding() {
-        assert_eq!(base64url(b""), "");
-        assert_eq!(base64url(b"f"), "Zg");
-        assert_eq!(base64url(b"fo"), "Zm8");
-        assert_eq!(base64url(b"foo"), "Zm9v");
-        assert_eq!(base64url(&[255, 255, 255]), "____");
-    }
 }

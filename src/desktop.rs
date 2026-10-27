@@ -40,7 +40,7 @@ const THREE_COLUMN_BREAKPOINT: f32 = 620.0;
 const AUTH_MODES: [(&str, &str); 3] = [
     ("Inherit", "Use global Git / gh credentials"),
     ("Personal Login", "Switch gh CLI user automatically"),
-    ("GitHub App", "Mint short-lived installation tokens"),
+    ("GitHub App", "Act as iltumio through zyphe-agents"),
 ];
 
 const SIGNING_FORMATS: [&str; 2] = ["GPG (openpgp)", "SSH (ssh)"];
@@ -2071,7 +2071,7 @@ impl DesktopView {
         &mut self,
         mode: usize,
         two_col: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Div {
         match mode {
             1 => div().pt(px(4.0)).child(field_with_hint(
@@ -2088,47 +2088,7 @@ impl DesktopView {
                     field_with_hint("App ID", self.app_id_input.clone()),
                     field_with_hint("Installation ID", self.installation_input.clone()),
                 ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .child(
-                            div()
-                                .text_size(px(12.5))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(TEXT_PRIMARY))
-                                .child("Private Key File (.pem, chmod 600)"),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .flex_wrap()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(180.0))
-                                        .child(self.key_input.clone()),
-                                )
-                                .child(
-                                    secondary_button("btn-choose-pem-key", "Choose Key…").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            if let Some(path) = rfd::FileDialog::new()
-                                                .set_title("Select GitHub App private key")
-                                                .pick_file()
-                                            {
-                                                this.app.editor.key = path.display().to_string();
-                                                this.sync_inputs_from_app(cx);
-                                                cx.notify();
-                                            }
-                                        }),
-                                    ),
-                                ),
-                        ),
-                ),
+                .child("Uses ~/.local/bin/zyphe-gh-auth and the keyring. Authorize with zyphe-gh-auth start, then finish. No private key is needed."),
             _ => div(),
         }
     }

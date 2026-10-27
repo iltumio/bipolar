@@ -786,7 +786,7 @@ impl Store {
     }
 }
 
-fn validate_auth(bytes: &[u8], home: &Path) -> Result<()> {
+fn validate_auth(bytes: &[u8], _home: &Path) -> Result<()> {
     let mut file = NamedTempFile::new()?;
     file.write_all(bytes)?;
     match value(file.path(), "github.authMode")?.as_str() {
@@ -796,26 +796,10 @@ fn validate_auth(bytes: &[u8], home: &Path) -> Result<()> {
             "Personal authentication requires a GitHub username"
         ),
         "app" => {
-            for key in ["github.appId", "github.installationId"] {
-                let id = value(file.path(), key)?;
-                ensure!(
-                    !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
-                    "{key} must be a numeric ID"
-                );
-            }
-            let key = value(file.path(), "github.privateKey")?;
-            let key = key
-                .strip_prefix("~/")
-                .map(|p| home.join(p))
-                .unwrap_or_else(|| PathBuf::from(key));
-            ensure!(
-                key.is_absolute() && key.is_file(),
-                "Select an existing absolute private-key file path"
-            );
-            ensure!(
-                fs::metadata(key)?.permissions().mode() & 0o077 == 0,
-                "Private key must be readable only by its owner (chmod 600)"
-            );
+            crate::auth::validate_app_profile(
+                &value(file.path(), "github.appId")?,
+                &value(file.path(), "github.installationId")?,
+            )?;
         }
         other => bail!("Unsupported authentication mode: {other}"),
     }
